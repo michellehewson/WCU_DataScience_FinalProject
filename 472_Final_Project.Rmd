@@ -1,0 +1,501 @@
+---
+title: "An Investigation of Police Stops Across America"
+author: "Michelle Hewson, Maxwell Pitney"
+date: "05/06/2022"
+output:
+  word_document: default
+  html_document: default
+---
+
+# Intro
+
+Over 50,000 traffic stops are made throughout the United States each day. The Stanford Open Policing Project is a project dedicated to gathering and releasing this data to the public for research purposes. We chose this source of data because it's a bountiful source of data, well-accredited, and we believed we would be able to discover interesting patterns in the data.
+
+# File set up
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(class)
+library(tidyverse)
+library(MASS)
+library(corrplot)
+library(rvest)
+#library(ROCR)
+```
+
+Setting the seed:
+```{r Seed}
+set.seed(19)
+```
+
+Functions we use:
+```{r Functions}
+# This function filters the specified state's data by 1. filtering between 2010 and 2013 2. ensuring that we sample from rows of data that do not have NA in the age, race, sex, or outcome column. We take 50,000 samples from each state.
+na_cleaner <- function (state_df){
+  no_na_state <- state_df %>% filter(date >= "2010-01-01" & date <= "2013-01-01") %>% filter(!is.na(subject_age) & !is.na(subject_race) & !is.na(subject_sex) & !is.na(outcome)) %>% sample_n(50000)
+  return((no_na_state))
+}
+
+# This function creates the age category variable and dictates what age category the subject is in based on their age.
+age_categories <- function (df){ 
+  df <- df %>% mutate(age_cat = if_else(subject_age <= 20, "0-20", if_else(subject_age <= 30, "21-30", if_else(subject_age <= 40, "31-40", if_else(subject_age <= 50, "41-50", if_else(subject_age <= 60, "51-60", if_else(subject_age <= 70, "61-70", if_else(subject_age <= 80, "71-80", if_else(subject_age <= 90, "81-90", if_else(subject_age <= 100, "91-100", if_else(subject_age > 100, "100+", "error")))))))))))
+}
+
+# This function calculates the z score of a vector x.
+calc_z_score <- function (x) {
+  (x-mean(x))/sd(x)
+}
+
+# This function alculates the accuracy.
+accuracy <- function (x) {
+  sum(diag(x)/(sum(rowSums(x)))) * 100
+}
+
+# This function calculates the precision.
+precision <- function (table) {
+  tp = table[1,1]
+  fp = table[1,2]
+  return(tp/(tp + fp) * 100)
+}
+
+# This function calculates the recall.
+recall <- function (table) {
+  tp = table[1,1]
+  fn = table[2,1]
+  return(tp/(tp + fn) * 100) 
+}
+
+# This function calculates the F1 Score.
+f1Score <- function (table) {
+  return(2*(precision(table)*recall(table))/(precision(table)+recall(table)))
+}
+```
+
+We chose the State Patrol data from the states Colorado, Florida, Washington, South Carolina, and Vermont for our data set. These states had millions of data entries so we did some prelininary cleaning to create a managable data set.
+```{r Original Data}
+# Wrangling the original data frames
+
+#colorado <- as_tibble(read.csv("/Users/michellehewson/Downloads/co_statewide_2020_04_01.csv"))
+#florida <- as_tibble(read.csv("/Users/michellehewson/Downloads/fl_statewide_2020_04_01.csv"))
+#washington <- as_tibble(read.csv("/Users/michellehewson/Downloads/wa_statewide_2020_04_01.csv"))
+#southcarolina <- as_tibble(read.csv("/Users/michellehewson/Downloads/sc_statewide_2020_04_01.csv"))
+#vermont <- as_tibble(read.csv("/Users/michellehewson/Downloads/vt_statewide_2020_04_01.csv"))
+```
+
+# Cleaning
+
+The data set we were working with required a lot of cleaning because not every state had the same variables. We were able to find 5 states that all had most of the variables we wanted to include, including date, county_name, age, race, sex, violation, etc. Once we found these states, we selected just these variables from their data sets. Vermont was the only state out of the 5 that didn't have a county_name variable, so we created it and filled it with NA values. South Carolina also didn't have a warning_issued variable, so we did the same thing. We had to do this so that we could combine all of the states into one data frame (they all need the same variables). 
+```{r Cleaning Original Data}
+# Picking the variables we want to use
+
+#clean_colorado <- colorado %>% subset(select = c(date, county_name, subject_age, subject_race, subject_sex, violation, arrest_made, citation_issued, warning_issued, outcome, search_conducted)) %>% mutate(state = "Colorado")
+
+#clean_florida <- florida %>% subset(select = c(date, county_name, subject_age, subject_race, subject_sex, violation, arrest_made, citation_issued, warning_issued, outcome, search_conducted)) %>% mutate(state = "Florida")
+
+#clean_washington <- washington %>% subset(select = c(date, county_name, subject_age, subject_race, subject_sex, violation, arrest_made, citation_issued, warning_issued, outcome, search_conducted)) %>% mutate(state = "Washington")
+
+#clean_southcarolina <- southcarolina %>% subset(select = c(date, county_name, subject_age, subject_race, subject_sex, violation, arrest_made, citation_issued, outcome, search_conducted)) %>% mutate(state = "South Carolina") %>% mutate(warning_issued = NA)
+
+#clean_vermont <- vermont %>% mutate(violation = raw_stop_reason_description, county_name = NA, state = "Vermont") %>% subset(select = c(date, subject_age, subject_race, subject_sex, arrest_made, citation_issued, warning_issued, outcome, search_conducted, violation, county_name, state))
+```
+
+Here we ran our 'na_cleaner' functions on our state data sets. First, it filtered each large data frame by a few specific years, then randomly sampling 50,000 entries in each data frame. Finally, it removed all NA's present in the variables 'subject_age', 'subject_race', 'subject_sex', or 'outcome'.
+```{r}
+#cleaner_colorado <- na_cleaner(clean_colorado)
+#cleaner_florida <- na_cleaner(clean_florida)
+#cleaner_washington <- na_cleaner(clean_washington)
+#cleaner_southcarolina <- na_cleaner(clean_southcarolina)
+#cleaner_vermont <- na_cleaner(clean_vermont)
+```
+
+Then we use the rbind() function to combine all of the states into one data frame. 
+```{r Combining}
+# Combine all of the states into one data frame
+
+#police_stops <- rbind(cleaner_colorado, cleaner_florida, cleaner_washington, cleaner_southcarolina, cleaner_vermont)
+```
+
+We created a few variables based that will help us explore our data.
+```{r Variable Creation}
+# Combining specific race categories for ease of use in graphics
+
+#police_stops$subject_race[police_stops$subject_race == "unknown" | police_stops$subject_race == "asian/pacific islander" | is.na(police_stops$subject_race)] <- "other"
+
+# Adding variables
+
+#first_date <- as.Date("2010-01-01")
+#police_stops <- police_stops %>% mutate(date = as.Date(date))
+
+#police_stops <- police_stops %>% mutate(months = format(police_stops$date,"%m"))
+#police_stops <- police_stops %>% mutate(days_of_month = as.numeric(format(police_stops$date, "%d")))
+
+#police_stops$months <- factor(police_stops$months, levels = c("01","02","03","04","05","06","07","08","09","10","11","12"), labels = c("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"))
+
+#police_stops <- police_stops %>% mutate(years = format(police_stops$date,"%Y"))
+
+#police_stops <- age_categories(police_stops)
+```
+
+This is where we loaded our cleaned and reduced data frame created above.
+```{r Quick Load}
+#police_stops <- as_tibble(read.csv("/Users/michellehewson/Desktop/spring 2022 classes/472clean"))
+police_stops <- as_tibble(read.csv("~/Documents/Math 472/Math472/police_stops_clean"))
+```
+
+# EDA & Visualization
+
+Now that we have all of our variables in order we can start exploring different patterns and relationships.
+```{r Exploring}
+# Stops per year
+stops_per_year <- police_stops %>% count(years)
+stops_per_year
+ggplot(police_stops) + geom_bar(aes(x = years)) + facet_wrap(~state)
+
+# Stops per race
+stops_per_race <- police_stops %>% count(subject_race)
+stops_per_race
+
+# Stops per age
+stops_per_age <- police_stops %>% count(subject_age)
+stops_per_age
+
+# Stops per age category
+stops_per_age_cat <- police_stops %>% count(age_cat)
+stops_per_age_cat
+
+# Stops per day 
+stops_per_day <- police_stops %>% count(days_of_month)
+stops_per_day
+# This shows signs that there very well may be a quota. Specifically, the increase at the beginnings and ends of each month.
+
+# Stops per counties
+# Florida
+stops_per_county_fl <- police_stops %>% filter(state == "Florida") %>% count(county_name)
+
+# Colorado
+stops_per_county_co <- police_stops %>% filter(state == "Colorado") %>% count(county_name)
+
+# Washington
+stops_per_county_wa <- police_stops %>% filter(state == "Washington") %>% count(county_name)
+stops_per_county_wa
+police_stops %>% filter(state == "Washington" & county_name == "King County") %>% count(subject_race)
+police_stops %>% filter(state == "Washington" & county_name == "King County") %>% ggplot() + geom_freqpoly(aes(x = subject_age, color = subject_race), binwidth = 1) + facet_wrap(~ state) + labs(x = "Age", y = "Count")
+
+# South Carolina
+stops_per_county_sc <- police_stops %>% filter(state == "South Carolina") %>% count(county_name)
+
+# Vermont
+stops_per_county_vt <- police_stops %>% filter(state == "Vermont") %>% count(county_name)
+
+# Taking a deeper look at the counties in Washington.
+stops_per_county_wa %>% filter(n >= 1000) %>% ggplot() + geom_col(aes(x = county_name, y = n)) + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) 
+
+# King County had a ton of stops, let's investigate
+police_stops %>% filter(state == "Washington" & county_name == "King County") %>% count(subject_race) %>% mutate(proportion = (n/7408)*100)
+police_stops %>% filter(state == "Washington" & county_name == "King County") %>% ggplot() + geom_freqpoly(aes(x = subject_age, color = subject_race), binwidth = 1) + facet_wrap(~ state) + labs(x = "Age", y = "Count")
+
+# We can compare our findings to the actual demographics of the area by scraping King County's Wikipedia for the information.
+
+king_county <- read_html("https://en.wikipedia.org/wiki/King_County,_Washington#Demographics"); king_county
+
+tables <- king_county %>% html_table(fill = TRUE)
+
+king_demographics_big <- tables[[3]] 
+king_demographics <- king_demographics_big[1:3]
+king_demographics[[2]] <- NULL; king_demographics
+king_demographics[2,1] <- "Asian & Other"
+king_demographics[2,2] <- "20.0%"
+king_demographics <- king_demographics %>% filter(king_demographics[1] == "White (non-Hispanic)" | king_demographics[1] == "Asian & Other" | king_demographics[1] == "Hispanic or Latino" | king_demographics[1] == "Black or African American (non-Hispanic)")
+king_demographics
+
+slices <- c(64.8,20,8.9,6)
+lbls <- c("White (non-Hispanic)", "Asian & Other", "Hispanic or Latino", "Black or African American (non-Hispanic)")
+pie(slices, labels = lbls, main="Pie Chart of 2011 Racial Demographics in King County, Washington")
+
+slices <- c(9.08,7.99,13.37,69.5)
+lbls <- c("black", "hispanic", "other", "white")
+pie(slices, labels = lbls, main="Pie Chart of Stops per Race in King County, Washington")
+
+# There may be some racial bias here. The proportion of stops per race did not match the demographics of the area.
+```
+
+```{r Graph1}
+police_stops %>% ggplot() + geom_freqpoly(aes(x = subject_age, color = subject_race), binwidth = 1) + facet_wrap(~ state) + labs(x = "Age", y = "Count", title = "The Distribution of Stops Made on Race")
+
+# This graph shows a very interesting picture. The most notable feature is the high number of stops on younger people. More importantly, when looking at the number per race, we can again see that the proportion of stops by race does not match their demographics. Specifically, this is notable in South Carolina.
+```
+
+```{r Graph2}
+police_stops %>% filter(arrest_made == TRUE | outcome == "citation") %>% ggplot() + geom_boxplot(aes(x = subject_age, fill = subject_race)) + facet_wrap(~ state) + labs(title = "Distribution of Subjects who were Arrested and Received a Citation", x = "Age")
+
+# Here we filtered to see who was receiving a citation and being arrested from a traffic stop based on age. 
+```
+
+```{r Graph3}
+police_stops %>% count(state, subject_race, subject_sex) %>% ggplot(aes(x = state, y = subject_race)) + geom_tile(aes(fill = n)) + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) + labs(title = "Number of Stops per State Based on Race", x = "State", y = "Subject Race")
+
+# This tile plot highlights the effect that race had on the number of stops in South Carolina.
+```
+
+```{r Graph4}
+police_stops %>% filter(arrest_made == TRUE | outcome == "citation") %>% ggplot() + geom_histogram(aes(x = subject_age), binwidth = 2) + facet_grid(rows = vars(state), cols = vars(subject_race)) + labs(x = "Age", y = "Count", title = "The Distribution of Arrests Made on State")
+
+# Breaking it out into a grid of histograms shows just how disproportionate the number of stops in South Carolina were. The percentage of population that is white more than doubles the population of black. Unfortunately, as we've seen in a few different formats, the number of stops does not reflect these proportions.
+```
+
+```{r Graph5}
+police_stops %>% filter(years == 2010 | years == 2011 | years == 2012) %>% ggplot() + geom_histogram(aes(x = days_of_month), binwidth = 1) + labs(title = "Total Number of Stops per Day of the Month", x = "Day of the Month", y = "Number of Stops", subtitle = "Noticable increase at the beginning and end of any given month") + facet_wrap(~years)
+
+# Again, we can see that there is a general trend of a higher number of stops at the beginnings and ends of the month.
+```
+
+```{r Holiday Graph}
+# Looking at the # of stops on holidays
+police_stops %>% ggplot() + geom_histogram(aes(x = days_of_month), binwidth = 1) + facet_wrap(~months) + labs(x = "Days of the Month", y = "Number of Stops", title = "Number of Stops Per Day", subtitle = "Broken out by month")
+
+# We notice that around certain holidays there is a drastic change in the number of stops. Let's explore this further.
+```
+
+Now that we've seen there seems to be a trend during holiday's, we want to explore a few specific holidays.
+```{r More Exploring}
+police_stops %>% filter(months == "September" & years == 2012) %>% count(days_of_month)
+police_stops %>% filter(months == "September" & years == 2012 & arrest_made == TRUE) %>% count(days_of_month)
+# Let's note that Labor Day in 2012 was on September 3 and September 1 was the Saturday of Labor Day weekend, more arrests were found on those precise weekends.
+
+police_stops %>% filter(months == "July") %>% count(days_of_month)
+police_stops %>% filter(months == "July" & arrest_made == TRUE) %>% count(days_of_month)
+# 4th of July weekend has a lot more stops and more arrests.
+
+police_stops %>% filter(months == "December") %>% count(days_of_month)
+# Let's note that the stops are super low on Christmas, opposite of the other months.
+
+police_stops %>% filter(months == "January") %>% count(days_of_month)
+police_stops %>% filter(months == "December") %>% count(days_of_month)
+# More stops for NYE as well.
+```
+
+Now that we have a decent idea that holidays effect the number of stops, we can explore more.
+```{r Holiday Exploration}
+# We start by making a variable for holidays.
+
+police_stops$date <- as.Date(police_stops$date)
+
+police_stops <- police_stops %>% mutate(holiday = if_else(date == "2010-12-25" | date == "2011-12-25" | date == "2012-12-25" | date == "2013-12-25" | date == "2010-12-31" | date == "2011-12-31" | date == "2012-12-31" | date == "2013-12-31" | date == "2010-01-01" | date == "2011-01-01" | date == "2012-01-01" | date == "2013-01-01" | date == "2010-03-17" | date == "2011-03-17"| date == "2012-03-17"| date == "2013-03-17" | date == "2010-04-04"| date == "2011-04-24"| date == "2010-04-08"| date == "2013-03-31" | date == "2010-05-31"| date == "2011-05-30"| date == "2012-05-28"| date == "2013-05-27"| date == "2010-05-31"| date == "2010-09-06"| date == "2011-09-05"| date == "2012-09-03"| date == "2013-09-02"| date == "2010-11-25"| date == "2011-11-24"| date == "2012-11-22"| date == "2013-11-28"| date == "2010-07-04"| date == "2011-07-04"| date == "2012-07-04"| date == "2013-07-04"| date == "2010-10-31"| date == "2011-10-31"| date == "2012-10-31"| date == "2013-10-31", TRUE, FALSE))
+
+police_stops %>% count(holiday)
+
+# Stops per day based on if there is a holiday or not.
+
+police_stops %>% filter(holiday == TRUE) %>% count(holiday) / 27 
+police_stops %>% filter(holiday == FALSE) %>% count(holiday) / 1068
+
+# We can see a large increase in police stops per day if it is a holiday or not.
+
+police_stops <- police_stops %>% mutate(day_of_year = 0)
+police_stops <- police_stops %>% mutate(day_of_year = if_else(years == "2010", as.Date(date) - as.Date("2010-01-01") + 1 , if_else(years == 2011, as.Date(date) - as.Date("2011-01-01") + 1, if_else(years == 2012, as.Date(date) - as.Date("2012-01-01") + 1, if_else(years == 2013,as.Date(date) - as.Date("2013-01-01") + 1, 0)))))
+
+police_stops$day_of_year <- as.numeric(police_stops$day_of_year)
+
+year2010 <- police_stops %>% filter(years == 2010) %>% subset(select = c(day_of_year)) %>% count(day_of_year) %>% mutate("2010" = n)
+year2010$n <- NULL
+year2011 <- police_stops %>% filter(years == 2011) %>% subset(select = c(day_of_year)) %>% count(day_of_year) %>% mutate("2011" = n)
+year2011$n <- NULL
+year2012 <- police_stops %>% filter(years == 2012)%>% subset(select = c(day_of_year)) %>% count(day_of_year) %>% mutate("2012" = n) %>% filter(day_of_year != 60)
+year2012$n <- NULL
+
+stops_by_year <- cbind(year2010, year2011, year2012)
+
+stops_by_year[3] <- NULL
+stops_by_year[4] <- NULL
+
+# This data frame lets us explore any trends throughout the year, based on each year.
+head(stops_by_year, 10)
+
+stops_by_year %>% ggplot() + geom_point(aes(x = day_of_year, y = stops_by_year$'2010', color = "red")) + geom_point(aes(x = day_of_year, y = stops_by_year$'2011', color = "blue")) + geom_point(aes(x = day_of_year, y = stops_by_year$'2012', color = "green")) + geom_vline(xintercept = 1) + geom_vline(xintercept = 365) + geom_vline(xintercept = 360) + geom_vline(xintercept = 76) + geom_vline(xintercept = 185) + geom_vline(xintercept = 150) + geom_vline(xintercept = 248) + geom_vline(xintercept = 328) + geom_vline(xintercept = 45) + labs(x = "Day of the Year", y = "Number of Stops", title = "Number of Stops per Day of the Year", subtitle = "Most holidays show a drastic increase in stops") + scale_colour_manual(name = 'Legend', values =c('red' = 'red','blue' = 'blue', 'green' = 'green'), labels = c('2010', '2011', '2012'))
+
+# As we have predicted, virtually every major holiday resulted in a large increase in the number of stops. Christmas was the one holiday that did not follow that trend, but we hypothesize that is because most people simply aren't driving that day, or because not as many police are on shift. Or, maybe they are in the Christmas spirit. 
+```
+
+#Modeling
+
+Now that we have a decent idea of what can effect your chances of getting a citation are, we are ready to try some modeling. We decided that the variable 'citation_issued' would be the best variable to predict. We start by further cleaning the data for KNN so the modeling functions run fine.
+```{r KNN Model Cleaning}
+# Making the model data frame for KNN
+
+knn_df <- police_stops %>% subset(select = c("citation_issued", "subject_race", "subject_age", "subject_sex", "state", "search_conducted", "days_of_month", "holiday", "years", "day_of_year")) %>% na.omit()
+
+knn_df$citation_issued <- as.numeric(factor(knn_df$citation_issued, levels = c(TRUE, FALSE), labels = c("1", "0")))
+
+knn_df$subject_sex <- as.numeric(factor(knn_df$subject_sex, levels = c("male", "female"), labels = c("1", "0")))
+
+knn_df$subject_race <- as.numeric(factor(knn_df$subject_race, levels = c("white", "hispanic", "black", "other"), labels = c("1", "2", "3", "4")))
+
+knn_df$state <- as.numeric(factor(knn_df$state, levels = c("Colorado", "Florida", "Washington", "South Carolina", "Vermont"), labels = c("1", "2", "3", "4", "5")))
+
+knn_df$search_conducted <- as.numeric(knn_df$search_conducted)
+
+knn_df$holiday <- as.numeric(factor(knn_df$holiday, levels = c(TRUE, FALSE), labels = c("1", "0")))
+
+# Normalizing the data
+
+knn_df[2:10] <- knn_df %>% dplyr::select(2:10) %>% lapply(calc_z_score)
+
+#  Checking that our mean is zero and standard deviation is one
+
+knn_df[2:10] %>% lapply(mean)
+knn_df[2:10] %>% lapply(sd)
+
+knn_df
+
+# We want to avoid the issues Multicollinearity can bring, so we check for any heavily correlated variables.
+
+knn_cor_mat = cor(knn_df)
+corrplot(knn_cor_mat, tl.cex = 0.5, method = "shade")
+
+# As we can see, we have none, so we are ready to split the data for KNN.
+```
+
+We will follow a similar procedure for LDA.
+```{r LDA Model Cleaning}
+# Making the model data frame for LDA
+
+lda_df <- police_stops %>% subset(select = c("citation_issued", "subject_race", "subject_age", "subject_sex", "state", "search_conducted", "days_of_month", "holiday", "years", "day_of_year")) %>% na.omit()
+
+lda_df$citation_issued <- as.numeric(factor(lda_df$citation_issued, levels = c(TRUE, FALSE), labels = c("1", "0")))
+
+lda_df$subject_sex <- as.numeric(factor(lda_df$subject_sex, levels = c("male", "female"), labels = c("1", "0")))
+
+lda_df$subject_race <- as.numeric(factor(lda_df$subject_race, levels = c("white", "hispanic", "black", "other"), labels = c("1", "2", "3", "4")))
+
+lda_df$state <- as.numeric(factor(lda_df$state, levels = c("Colorado", "Florida", "Washington", "South Carolina", "Vermont"), labels = c("1", "2", "3", "4", "5")))
+
+lda_df$search_conducted <- as.numeric(lda_df$search_conducted)
+
+lda_df$holiday <- as.numeric(factor(lda_df$holiday, levels = c(TRUE, FALSE), labels = c("1", "0")))
+
+# Normalizing the data
+
+lda_df[2:10] <- lda_df %>% dplyr::select(2:10) %>% lapply(calc_z_score)
+
+#  Checking that our mean is zero and standard deviation is one
+lda_df[2:10] %>% lapply(mean)
+lda_df[2:10] %>% lapply(sd)
+
+lda_df
+
+# Checking the correlation of variables again.
+
+lda_cor_mat = cor(lda_df)
+corrplot(lda_cor_mat, tl.cex = 0.5, method = "shade")
+
+# Everything checks out, so we are ready to split the data for LDA.
+```
+
+# Validating the data sets
+
+```{r KNN Validating}
+# Splitting the model data frame for KNN
+
+knn_sample_rows <- sample(1:nrow(knn_df), size = ceiling(0.80 * nrow(knn_df)), replace = FALSE)
+
+knn_train <- knn_df[knn_sample_rows, -1]
+
+knn_test <- knn_df[-knn_sample_rows, -1]
+
+knn_train_response <- knn_df[knn_sample_rows, 1]
+
+knn_test_response <- knn_df[-knn_sample_rows, 1]
+```
+
+```{r LDA Validating}
+# Splitting the model data frame for LDA
+
+lda_sample_rows <- sample(1:nrow(lda_df), size = ceiling(0.80 * nrow(lda_df)), replace = FALSE)
+
+lda_train <- lda_df[lda_sample_rows, ]
+
+lda_test <- lda_df[-lda_sample_rows, ]
+
+lda_test_response <- lda_df[-lda_sample_rows, 1]
+```
+ 
+```{r KNN}
+# Running the model for KNN
+
+cl = knn_train_response[,1, drop = TRUE]
+
+knn_pred <- knn(train = knn_train,
+           test = knn_test,
+           cl,
+           k = 23)
+
+# We found that our best results came from 'k = 23'
+
+# Building the confusion matrix for KNN
+
+knn_tab <- table(knn_pred, knn_test_response$citation_issued)
+```
+
+```{r LDA}
+# Running the model for LDA
+
+lda_model <- lda(formula = citation_issued ~ ., data = lda_train)
+
+# Making predictions from our LDA model
+
+lda_pred <- predict(lda_model, lda_test[-1], type = "response")
+
+# Building confusion matrix for LDA
+
+lda_tab <- table(lda_pred$class, lda_test_response$citation_issued)
+```
+
+#Scoring
+
+```{r KNN Scores}
+# Testing accuracy for KNN
+
+knn_acc <- accuracy(knn_tab)
+
+knn_p <- precision(knn_tab)
+knn_r <- recall(knn_tab)
+
+knn_f1 <- f1Score(knn_tab)
+
+knn_tab
+
+knn_score <- tibble("Method" = c("Traditional Accuracy", "Precision", "Recall", "F1"), "Result" = c(knn_acc, knn_p, knn_r, knn_f1)); knn_score
+
+# Here we can see that KNN with k = 23 did a fairly decent job at modeling whether or not a citation was issued. While the score itself may not be the highest, the fact that both the precision and the recall are decent is a good sign that our model is not cutting corners to get high results. 
+```
+
+```{r LDA Scores}
+# Testing accuracy of LDA
+
+lda_acc = mean(lda_pred$class == lda_test$citation_issued) * 100
+
+lda_p <- precision(lda_tab)
+lda_r <- recall(lda_tab)
+
+lda_f1 <- f1Score(lda_tab)
+
+lda_tab
+
+lda_score <- tibble("Method" = c("Traditional Accuracy", "Precision", "Recall", "F1"), "Result" = c(lda_acc, lda_p, lda_r, lda_f1)); lda_score
+
+# While the precision was drastically improved, the recall went down a relatively equal amount. In the context of our situation, this was an indication that this model was not as useful as the KNN model. A high number of false positives is not acceptable here.
+
+# Taking a look at the ROC curve may give an idea of how the lowered recall is affecting our model's performance.
+
+lda_pred_roc <- prediction(lda_pred$posterior[,2], lda_test$citation_issued)
+perf_roc = performance(lda_pred_roc, "tpr", "fpr")
+plot(perf_roc, colorize = TRUE)
+
+# As we can see, the curve is just above the 'y = x' line which is essentially random chance. This highlights the importance of utilizing multiple scoring metrics. Only using one, or even a few, may give a false sense of security when deciding which model should be used.
+```
+
+#Conclusion
+
+Overall, the data we used from the Stanford Open Policing Project was a really good choice on our part. It had a plentiful amount of data to choose from and made it relatively easy to combine different states to research possible patterns in the data. Coming into this project, we definitely knew what we patterns we wanted to investigate and some of our findings definitely shocked us. The amount of stops on holidays was the most interesting piece of our findings because it definitely makes sense as to why more people are being stopped (more police on shift, more drunk drivers, etc.), but it is not completely obvious. We also found that lots of different factors played into people being stopped on the road, and that these stops can not be attested to one singular reason. Modeling the data was also an interesting task because we were able to employ things we learned in class along with things we researched on our own. We also utilized different accuracy functions so that we were not just relying on one accuracy percentage. Rather, we were able to look at the accuracy of our model in several ways to get a better understanding of the model's effectiveness. If we were to redo this project, we would investigate individual, well-populated cities with bad reputations and see what patterns their data presented. Hopefully more detailed data is released by S.O.P.P. in the future and makes this possible.
+
